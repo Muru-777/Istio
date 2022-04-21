@@ -1,0 +1,29 @@
+Istio:
+
+curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.6.8 TARGET_ARCH=x86_64 sh -
+export PATH=$PWD/bin:$PATH
+istioctl install --set profile=demo -y
+kubectl label namespace default istio-injection=enabled
+istioctl kube-inject -f samples/sleep/sleep.yaml | kubectl apply -f -
+
+
+
+Kubernetes commands:
+To remove the labels:
+kubectl label namespace default istio-injection-
+kubectl get ns --show-labels
+kubectl label namespace default istio-injection=enabled --overwrite
+kubectl label namespace default istio-injection=enabled
+To delete all service or pods in a particular namespace:
+kubectl delete --all svc --namespace=default
+
+
+Istio:
+
+Istio is a service mesh that is built around Envoy proxy to manage and control the flow of traffic, secure services and monitor communication between them.
+
+https://confluence.fkinternal.com/display/ISTIO/Helm+Integration
+https://confluence.fkinternal.com/display/ISTIO/Stateful+support 
+
+sidecar.istio.io/inject : false   
+ref: https://istio.io/latest/docs/reference/config/annotations/ 
