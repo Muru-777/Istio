@@ -1,0 +1,255 @@
+
+A Gateway provides more extensive customization and flexibility than Ingress, and allows Istio features such as monitoring and route rules to be applied to traffic entering the cluster.
+
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: ingress-gw
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      name: http
+      number: 80
+      protocol: HTTP
+    hosts:
+    - "*"
+# https, tcp and tls
+
+HTTPS:
+using kubernetes secret with key and certificate create tls secret.
+
+  port:
+  -  number:443
+     protocol: HTTPS
+     name: https
+  tls:
+    credintialName: tls
+---
+
+#A VirtualService defines a set of traffic routing rules to apply when a host is addressed. Each routing rule defines matching criteria for traffic of a specific protocol. If the traffic is matched, then it is sent to a named destination service (or subset/version of it) defined in the registry.
+
+apiVersion: networking.isitio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: ingress-vs
+spec:
+  hosts:
+  - "*"
+  gateways:
+  - ingress-gw
+  http:
+  - timeouts: 5s
+    match:
+      uri:
+        exact: /productpage
+      rewrite: /product
+      delegate:
+        name: productpage(another virtual sevrice name)
+    route:
+    - destination:
+        hosts: productpage
+        subsets: v1
+      weight: 75 
+        port:
+          number: 9080
+
+TLS:
+  tls:
+    match:
+      port: 443
+      snihosts:
+      - foo.*.com
+    route:
+
+Delegate: u can pass one virtual service request to another virtual service using this, when route and redirect is not mentioned.
+
+Headers: request and response instead of match(set and remove can be used)
+
+apart from https, https and tls (443,80), if traffic comes to any other port it can route usingf tcp
+
+TCP:
+  tcp:
+    match:
+      port: 27017
+
+HTTPMATCHREQUEST:
+
+  http:
+    match:
+      headers:
+        end-user:
+          exact: json
+Retry, timeouts, circuit breakers, fault-injection
+    route:
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+      retryOn: caonnect-failure, gateway-error, reset.
+      (https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/router_filter#x-envoy-retry-on)
+
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 5s
+    fault:
+      abort:
+        percentage: 
+          value: 0.1
+        httpStatus: 400
+
+     corsPolicy:
+      allowOrigins:
+      - exact: https://example.com
+      allowMethods:
+      - POST
+      - GET
+      allowCredentials: false
+      allowHeaders:
+      - X-Foo-Bar
+      maxAge: "24h"
+---
+
+# Destination indicates the network addressable service to which the request/connection will be sent after processing a routing rule. The destination.host should unambiguously refer to a service in the service registry. Istio’s service registry is composed of all the services found in the platform’s service registry (e.g., Kubernetes services, Consul services), as well as services declared through the ServiceEntry resource.
+
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: ingress-dr
+spec:
+  hosts:
+  - productpage
+  trafficPolicy:
+    loadBalancer:
+      simple: RANDOM, LEAST_COMMON, ROUND_ROBIN
+  portLevelSettings:
+  - port:
+      number: 80
+  subsets:
+    name: v1
+    labels:
+      version: v1
+
+sticky session:
+
+   trafficPolicy:
+     loadBalancer:
+       consistentHash:
+         httpCookie:
+           user: name
+           ttl: 10s
+connectionlevel settings:
+
+  hosts: 
+  - myredis.srv.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnection: 100
+       connectTimeout: 30ms
+       tcpKeepalive:
+         time: 7200s
+         interval: 75s
+ 
+
+ outlier detection,
+
+trafficPolicy:
+   connectionPool:
+      tcp:
+        maxConnection: 20
+      http:
+        http2MaxRequests: 100
+        maxRequestsforconnection: 10
+      outlierdetection:
+        consecutive5xxErrors: 7
+        interval: 5m 
+        baseejectionTime: 5m
+client tls settings:
+     we can pass tls certificates to upstream cluster(like db)
+     trafficPolicy:
+       tls:
+         mode: MUTUAL
+         clientCertificate: path
+         privateKey: path
+         caCertificates: path
+---
+ServiceEntry enables adding additional entries into Istio’s internal service registry, so that auto-discovered services in the mesh can access/route to these manually specified services.
+DNS name, VIPs, ports, protocols, endpoints
+
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: ingress-se
+spec:
+  hosts:
+  - "*"
+  ports:
+  - port: 80
+    protocol: HTTP
+    name: http
+  location: MESH_EXTERNAL(external API),MESH_INTERNAL(unmanaged VM's which needs to be added part of mesh)
+  resolution: (DNS,NONE,STATIC)
+addresses: The virtual IP addresses associated with the service
+endpoint: endpoints associated with the service
+
+workload entry: vM's which is not a part of kubernetes cluster
+---
+apiversion: networking.istio.io/v1alpha3
+Kind: Gateway
+spec:
+  selector:
+    istio: egressGateway
+  hosts:
+  - "*"
+  ports:
+  - number: 80
+    name: http
+    protocol: HTTP
+
+use-case:
+
+Consider an organization that has a strict security requirement that all traffic leaving the service mesh must flow through a set of dedicated nodes. These nodes will run on dedicated machines, separated from the rest of the nodes running applications in the cluster. These special nodes will serve for policy enforcement on the egress traffic and will be monitored more thoroughly than other nodes.
+
+Another use case is a cluster where the application nodes don’t have public IPs, so the in-mesh services that run on them cannot access the Internet. Defining an egress gateway, directing all the egress traffic through it, and allocating public IPs to the egress gateway nodes allows the application nodes to access external services in a controlled way.
+---
+
+sidecar
+
+
+Sidecar describes the configuration of the sidecar proxy that mediates inbound and outbound communication of the workload instance to which it is attached.
+
+apiVersion: networking.istio.io/v1beta1
+kind: Sidecar
+metadata:
+  name: partial-ip-tables
+  namespace: prod-us1
+spec:
+  workloadSelector:
+    labels:
+      app: productpage
+  ingress:
+    port:
+      number: 80 # binds to 172.16.1.32:80
+      protocol: HTTP
+      name: somename
+    defaultEndpoint: 127.0.0.1:8080
+    captureMode: NONE
+  egress:
+    # use the system detected defaults
+    # sets up configuration to handle outbound traffic to services
+    # in 192.168.0.0/16 subnet, based on information provided by the
+    # service registry
+  - captureMode: IPTABLES
+    hosts:
+    - "*/*"
+By default, Istio will program all sidecar proxies in the mesh with the necessary configuration required to reach every workload instance in the mesh, as well as accept traffic on all the ports associated with the workload
+
+
+---
+
+Canary deployment:
+
+envoy filter, circuit breaker,multiple VPC connection example.
